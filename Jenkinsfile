@@ -1,5 +1,4 @@
 pipeline {
-
     agent any
 
     environment {
@@ -7,88 +6,57 @@ pipeline {
         IMAGE_TAG = 'latest'
         CONTAINER_NAME = 'springbootdemocontainer'
         PORT = '8080'
+
+        DOCKER_HUB = credentials('dockerhub-creds')
     }
 
     stages {
 
         stage('Build JAR') {
             steps {
-                echo 'Starting Stage 1 - Build JAR'
-
-                sh 'chmod +x mvnw'
-
-                sh './mvnw clean package'
+                sh '''
+                    chmod +x mvnw
+                    ./mvnw clean package
+                '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                echo 'Starting Stage 2 - Build Docker Image'
-
-                sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
+                sh 'docker build -t "$IMAGE_NAME:$IMAGE_TAG" .'
             }
         }
 
-        stage('Push Image to Docker Hub') {
+        stage('Push Image') {
             steps {
+                sh '''
+                    echo "$DOCKER_HUB_PSW" | docker login \
+                        -u "$DOCKER_HUB_USR" \
+                        --password-stdin
 
-                echo 'Starting Stage 3 - Push Image to Docker Hub'
+                    docker tag "$IMAGE_NAME:$IMAGE_TAG" \
+                        "$DOCKER_HUB_USR/$IMAGE_NAME:$IMAGE_TAG"
 
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_HUB_USERNAME',
-                        passwordVariable: 'DOCKER_HUB_PASSWORD'
-                    )
-                ]) {
+                    docker push \
+                        "$DOCKER_HUB_USR/$IMAGE_NAME:$IMAGE_TAG"
 
-                    sh '''
-                        echo "$DOCKER_HUB_PASSWORD" | docker login \
-                            -u "$DOCKER_HUB_USERNAME" \
-                            --password-stdin
-
-                        docker tag "$IMAGE_NAME:$IMAGE_TAG" \
-                            "$DOCKER_HUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
-
-                        docker push \
-                            "$DOCKER_HUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
-
-                        docker logout
-
-                        docker rmi "$IMAGE_NAME:$IMAGE_TAG" || true
-                    '''
-                }
+                    docker logout
+                '''
             }
         }
 
         stage('Deploy Container') {
             steps {
-
-                echo 'Starting Stage 4 - Deploy Container'
-
                 sh '''
                     docker stop "$CONTAINER_NAME" || true
-
                     docker rm "$CONTAINER_NAME" || true
 
                     docker run -d \
                         --name "$CONTAINER_NAME" \
                         -p "$PORT:$PORT" \
-                        "$DOCKER_HUB_USERNAME/$IMAGE_NAME:$IMAGE_TAG"
-
-                    docker image prune -f
+                        "$DOCKER_HUB_USR/$IMAGE_NAME:$IMAGE_TAG"
                 '''
             }
-        }
-    }
-
-    post {
-        success {
-            echo 'Jenkins Pipeline Completed Successfully'
-        }
-
-        failure {
-            echo 'Jenkins Pipeline Failed'
         }
     }
 }
